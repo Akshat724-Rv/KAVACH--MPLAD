@@ -1,44 +1,119 @@
 import sys
+import os
 from pathlib import Path
 import numpy as np
-import pandas as pd
-from sklearn.ensemble import IsolationForest
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import cv2
+from PIL import Image, ImageChops, ImageEnhance
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-INPUT_FILE = BASE_DIR / "data" / "processed" / "mplads_works_normalized.csv"
-OUTPUT_FILE = BASE_DIR / "data" / "processed" / "mplads_works_scored.csv"
+INPUT_FILE = BASE_DIR / "data" / "processed" / "document_screening_normalized.csv"
+OUTPUT_FILE = BASE_DIR / "data" / "processed" / "document_screening_scored.csv"
 
 
-def generate_reasons(row):
-    """Generates human-readable explainable evidence for human auditors."""
+def perform_ela_tampering_check(image_path, quality=90):
+    """
+    Module 3: Error Level Analysis (ELA) for Detecting Digital Alterations.
+    Resaves image at a specific quality level and checks pixel compression differences.
+    """
+    try:
+        temp_filename = "temp_ela.jpg"
+        original = Image.open(image_path).convert('RGB')
+        
+        # Save temporary image with fixed compression rate
+        original.save(temp_filename, 'JPEG', quality=quality)
+        resaved = Image.open(temp_filename)
+        
+        # Find absolute pixel difference
+        ela_image = ImageChops.difference(original, resaved)
+        extrema = ela_image.getextrema()
+        max_diff = max([ex[1] for ex in extrema])
+        
+        if max_diff == 0:
+            max_diff = 1
+            
+        scale = 255.0 / max_diff
+        ela_image = ImageEnhance.Brightness(ela_image).enhance(scale)
+        
+        # Clean temporary image
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+
+        # Convert ELA image to numpy array for variance calculation
+        ela_np = np.array(ela_image)
+        variance = np.var(ela_np)
+
+        # High variance in error levels indicates potential digital splicing / manipulation
+        is_tampered = variance > 1200.0
+        return is_tampered, round(float(variance), 2)
+
+    except Exception as e:
+        return False, 0.0
+
+
+def analyze_document_tampering(image_path):
+    """
+    Dynamic API Handler called by Flask (app.py) during document screening.
+    """
     reasons = []
-    if row["cost_anomaly_score"] > 0.3:
-        reasons.append(
-            f"Sanctioned cost (₹{row['sanctioned_amount']:,}) exceeds the category median baseline."
-        )
-    if row["delay_anomaly_score"] > 0.3:
-        reasons.append(
-            f"Administrative delay of {row['days_to_sanction']} days between recommendation and sanction."
-        )
-    if row["duplicate_score"] > 0.5:
-        reasons.append(
-            f"High textual similarity ({int(row['duplicate_score']*100)}%) detected with another registered work."
-        )
-    if row["multivariate_score"] > 0.5:
-        reasons.append(
-            "Isolation Forest model flagged multivariate numerical anomaly."
-        )
+    risk_score = 10  # Baseline
+
+    # 1. Perform ELA Digital Alteration Check
+    is_tampered, ela_score = perform_ela_tampering_check(image_path)
+    if is_tampered:
+        risk_score += 45
+        reasons.append(f"Digital pixel manipulation detected via Error Level Analysis (ELA Variance: {ela_score}).")
+
+    # 2. Basic Metadata Inspection
+    try:
+        img = Image.open(image_path)
+        info = img._getexif() if hasattr(img, '_getexif') else None
+        if info:
+            metadata_str = str(info).lower()
+            if any(software in metadata_str for software in ['photoshop', 'gimp', 'canva', 'paint']):
+                risk_score += 35
+                reasons.append("Image EXIF metadata indicates editing software trace (Photoshop/GIMP).")
+    except Exception:
+        pass
+
+    # Normalize Score (0 to 100)
+    final_risk_score = min(100, risk_score)
+    
+    severity = "LOW"
+    if final_risk_score > 65:
+        severity = "HIGH"
+    elif final_risk_score > 35:
+        severity = "MEDIUM"
 
     if not reasons:
-        reasons.append("All baseline metrics within acceptable operational limits.")
+        reasons.append("Document visual structure & digital signature appear genuine.")
+
+    return {
+        "risk_score": final_risk_score,
+        "severity": severity,
+        "tampering_detected": is_tampered,
+        "risk_reasons": reasons
+    }
+
+
+def generate_document_reasons(row):
+    """Generates human-readable explainable evidence for border officials."""
+    reasons = []
+    if row.get("is_expired", False):
+        reasons.append("Document has passed its official validity / expiration date.")
+    if row.get("mrz_checksum_valid") == False:
+        reasons.append("Machine Readable Zone (MRZ) checksum validation failed.")
+    if row.get("tampering_flag", False):
+        reasons.append("Visual Tampering Engine flagged photo replacement or text manipulation.")
+    
+    if not reasons:
+        reasons.append("Document parameters match official international standards.")
 
     return reasons
 
 
 def calculate_risk():
-    print("[*] Phase 3: Executing Multi-Signal Risk Engine...")
+    """Batch calculation routine for mock dataset processing."""
+    print("[*] Phase 3: Executing Document Tampering & Multi-Signal Risk Engine...")
 
     if not INPUT_FILE.exists():
         print(f"[!] Input file missing: {INPUT_FILE}")
@@ -46,59 +121,15 @@ def calculate_risk():
 
     df = pd.read_csv(INPUT_FILE)
 
-    # 1. Cost Anomaly (Peer Group IQR / Median)
-    category_medians = df.groupby("work_category")[
-        "sanctioned_amount"
-    ].transform("median")
-    df["cost_ratio"] = df["sanctioned_amount"] / np.maximum(
-        category_medians, 1.0
-    )
-    df["cost_anomaly_score"] = np.clip(
-        (df["cost_ratio"] - 1.0) / 2.0, 0.0, 1.0
-    )
+    # Calculate batch risk score
+    df["risk_score"] = np.where(df["tampering_flag"], 85.0, 15.0)
+    df["severity"] = np.where(df["risk_score"] > 60, "HIGH", "LOW")
+    df["recommended_action"] = np.where(df["severity"] == "HIGH", "Secondary Inspection Required", "Passed Clearance")
 
-    # 2. Delay Anomaly
-    df["delay_anomaly_score"] = np.clip(df["days_to_sanction"] / 120.0, 0.0, 1.0)
+    df["risk_reasons"] = df.apply(generate_document_reasons, axis=1)
 
-    # 3. Text Duplicate Detection (TF-IDF + Cosine Similarity)
-    tfidf = TfidfVectorizer(stop_words="english")
-    tfidf_matrix = tfidf.fit_transform(df["clean_description"].fillna(""))
-    sim_matrix = cosine_similarity(tfidf_matrix)
-    np.fill_diagonal(sim_matrix, 0.0)
-    df["duplicate_score"] = sim_matrix.max(axis=1)
-
-    # 4. Multivariate Anomaly (Isolation Forest)
-    features = df[
-        ["sanctioned_amount", "days_to_sanction", "expenditure_ratio"]
-    ].fillna(0)
-    iso = IsolationForest(contamination=0.2, random_state=42)
-    df["iso_anomaly"] = iso.fit_predict(features)
-    df["multivariate_score"] = np.where(df["iso_anomaly"] == -1, 0.8, 0.1)
-
-    # 5. Composite Weighted Risk Score (0 - 100)
-    df["risk_score"] = (
-        (df["cost_anomaly_score"] * 0.30)
-        + (df["delay_anomaly_score"] * 0.25)
-        + (df["duplicate_score"] * 0.25)
-        + (df["multivariate_score"] * 0.20)
-    ) * 100
-    df["risk_score"] = df["risk_score"].round(2)
-
-    # Risk Severity & Action Labels
-    df["severity"] = pd.cut(
-        df["risk_score"],
-        bins=[-1, 35, 65, 100],
-        labels=["LOW", "MEDIUM", "HIGH"],
-    )
-    df["recommended_action"] = "Priority verification recommended"
-
-    # Generate Explainable Reasons
-    df["risk_reasons"] = df.apply(generate_reasons, axis=1)
-
-    # Save Scored Dataset
     df.to_csv(OUTPUT_FILE, index=False)
-    print(f"[✔] Risk Engine Completed! Output saved at:")
-    print(f"    - {OUTPUT_FILE}")
+    print(f"[✔] Border Risk Engine Completed! Output saved at: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

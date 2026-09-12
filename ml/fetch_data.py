@@ -7,105 +7,79 @@ RAW_DIR = BASE_DIR / "data" / "raw"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_real_esakshi_data():
+def load_border_screening_mock_data():
     print(
-        "[*] Generating raw MPLADS dataset strictly matching eSAKSHI schema..."
+        "[*] Generating raw Border Document Screening dataset..."
     )
 
     dataset = [
         {
-            "work_id": "MPLADS/18LS/MH/001",
-            "state_name": "Maharashtra",
-            "district_name": "Hingoli",
-            "constituency_name": "HINGOLI",
-            "mp_name": "AASHTIKAR PATIL NAGESH BAPURAO",
-            "work_category": "Roads & Bridges",
-            "work_description": (
-                "Construction of CC Road from Main Square to Community Center"
-            ),
-            "sanctioned_amount": 1500000,
-            "expenditure_amount": 1200000,
-            "recommend_date": "2023-05-10",
-            "sanction_date": "2023-06-15",
-            "completion_date": "2023-11-20",
-            "work_status": "Completed",
+            "screening_id": "CHK/2026/001",
+            "checkpoint_name": "IGI Airport - Terminal 3",
+            "document_type": "Passport",
+            "document_number": "J8291048",
+            "passenger_name": "JOHN DOE",
+            "nationality": "IND",
+            "dob": "1992-05-14",
+            "expiry_date": "2029-08-20",
+            "issue_country": "IND",
+            "mrz_status": "MATCHED",
+            "tampering_flag": False,
+            "risk_score": 5,
+            "screening_status": "CLEAR",
         },
         {
-            "work_id": "MPLADS/18LS/MH/002",
-            "state_name": "Maharashtra",
-            "district_name": "Hingoli",
-            "constituency_name": "HINGOLI",
-            "mp_name": "AASHTIKAR PATIL NAGESH BAPURAO",
-            "work_category": "Roads & Bridges",
-            "work_description": (
-                "Construction of Concrete Road near Community Center Hingoli"
-            ),
-            "sanctioned_amount": 1480000,
-            "expenditure_amount": 0,
-            "recommend_date": "2023-05-12",
-            "sanction_date": "2023-06-18",
-            "completion_date": "",
-            "work_status": "Sanctioned",
+            "screening_id": "CHK/2026/002",
+            "checkpoint_name": "Attari Border Checkpoint",
+            "document_type": "Visa",
+            "document_number": "VS991024",
+            "passenger_name": "ALEX SMITH",
+            "nationality": "USA",
+            "dob": "1988-11-03",
+            "expiry_date": "2025-01-10",  # Expired Visa Example
+            "issue_country": "IND",
+            "mrz_status": "CHECKSUM_ERROR",
+            "tampering_flag": True,
+            "risk_score": 88,
+            "screening_status": "HIGH_RISK_FLAGGED",
         },
         {
-            "work_id": "MPLADS/18LS/UP/001",
-            "state_name": "Uttar Pradesh",
-            "district_name": "Kannauj",
-            "constituency_name": "KANNAUJ",
-            "mp_name": "AKHILESH YADAV",
-            "work_category": "Drinking Water",
-            "work_description": (
-                "Installation of 1000L Commercial RO Water Plant in District"
-                " Hospital"
-            ),
-            "sanctioned_amount": 850000,
-            "expenditure_amount": 850000,
-            "recommend_date": "2023-04-20",
-            "sanction_date": "2023-05-10",
-            "completion_date": "2023-08-01",
-            "work_status": "Completed",
+            "screening_id": "CHK/2026/003",
+            "checkpoint_name": "Mumbai Port Border",
+            "document_type": "National ID",
+            "document_number": "ID401928",
+            "passenger_name": "SAMEER SHUKLA",
+            "nationality": "IND",
+            "dob": "1975-02-18",
+            "expiry_date": "2032-12-31",
+            "issue_country": "IND",
+            "mrz_status": "MATCHED",
+            "tampering_flag": False,
+            "risk_score": 12,
+            "screening_status": "CLEAR",
         },
         {
-            "work_id": "MPLADS/18LS/BR/001",
-            "state_name": "Bihar",
-            "district_name": "Aurangabad",
-            "constituency_name": "AURANGABAD_BR",
-            "mp_name": "ABHAY KUMAR SINHA",
-            "work_category": "Education",
-            "work_description": (
-                "Construction of Additional Classroom Block in High School"
-            ),
-            "sanctioned_amount": 4500000,
-            "expenditure_amount": 1500000,
-            "recommend_date": "2023-01-10",
-            "sanction_date": "2023-08-15",
-            "completion_date": "",
-            "work_status": "Non-Progress",
-        },
-        {
-            "work_id": "MPLADS/18LS/WB/001",
-            "state_name": "West Bengal",
-            "district_name": "Tamluk",
-            "constituency_name": "TAMLUK",
-            "mp_name": "ABHIJIT GANGOPADHYAY",
-            "work_category": "Sanitation",
-            "work_description": (
-                "Installation of Public Toilets near Bus Stand"
-            ),
-            "sanctioned_amount": 600000,
-            "expenditure_amount": 600000,
-            "recommend_date": "2023-06-01",
-            "sanction_date": "2023-06-25",
-            "completion_date": "2023-09-10",
-            "work_status": "Completed",
+            "screening_id": "CHK/2026/004",
+            "checkpoint_name": "IGI Airport - Terminal 3",
+            "document_type": "Passport",
+            "document_number": "K1920491",
+            "passenger_name": "ROBERT BROWN",
+            "nationality": "GBR",
+            "dob": "1990-07-22",
+            "expiry_date": "2028-03-15",
+            "issue_country": "GBR",
+            "mrz_status": "PHOTO_EDITED_ELA",
+            "tampering_flag": True,
+            "risk_score": 92,
+            "screening_status": "HIGH_RISK_FLAGGED",
         },
     ]
 
     df = pd.DataFrame(dataset)
-    target_path = RAW_DIR / "mplads_works_raw.csv"
+    target_path = RAW_DIR / "document_screening_raw.csv"
     df.to_csv(target_path, index=False)
-    print(f"[✔] Raw dataset created at: {target_path}")
+    print(f"[✔] Border Document raw dataset created at: {target_path}")
 
 
 if __name__ == "__main__":
-    load_real_esakshi_data()
+    load_border_screening_mock_data()
