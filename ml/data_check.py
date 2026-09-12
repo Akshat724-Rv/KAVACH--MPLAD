@@ -1,0 +1,1 @@
+print("NIRIKSHAN-AI ML environment ready")

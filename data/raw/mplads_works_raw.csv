@@ -1,0 +1,6 @@
+work_id,state_name,district_name,constituency_name,mp_name,work_category,work_description,sanctioned_amount,expenditure_amount,recommend_date,sanction_date,completion_date,work_status
+MPLADS/18LS/MH/001,Maharashtra,Hingoli,HINGOLI,AASHTIKAR PATIL NAGESH BAPURAO,Roads & Bridges,Construction of CC Road from Main Square to Community Center,1500000,1200000,2023-05-10,2023-06-15,2023-11-20,Completed
+MPLADS/18LS/MH/002,Maharashtra,Hingoli,HINGOLI,AASHTIKAR PATIL NAGESH BAPURAO,Roads & Bridges,Construction of Concrete Road near Community Center Hingoli,1480000,0,2023-05-12,2023-06-18,,Sanctioned
+MPLADS/18LS/UP/001,Uttar Pradesh,Kannauj,KANNAUJ,AKHILESH YADAV,Drinking Water,Installation of 1000L Commercial RO Water Plant in District Hospital,850000,850000,2023-04-20,2023-05-10,2023-08-01,Completed
+MPLADS/18LS/BR/001,Bihar,Aurangabad,AURANGABAD_BR,ABHAY KUMAR SINHA,Education,Construction of Additional Classroom Block in High School,4500000,1500000,2023-01-10,2023-08-15,,Non-Progress
+MPLADS/18LS/WB/001,West Bengal,Tamluk,TAMLUK,ABHIJIT GANGOPADHYAY,Sanitation,Installation of Public Toilets near Bus Stand,600000,600000,2023-06-01,2023-06-25,2023-09-10,Completed
