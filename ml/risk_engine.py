@@ -1,136 +1,134 @@
-import sys
-import os
-from pathlib import Path
+import pandas as pd
 import numpy as np
-import cv2
-from PIL import Image, ImageChops, ImageEnhance
+from sklearn.ensemble import IsolationForest
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-INPUT_FILE = BASE_DIR / "data" / "processed" / "document_screening_normalized.csv"
-OUTPUT_FILE = BASE_DIR / "data" / "processed" / "document_screening_scored.csv"
+class ESATARKRiskEngine:
+    def __init__(self, df: pd.DataFrame):
+        self.df = df.copy()
+        self._preprocess_data()
 
+    def _preprocess_data(self):
+        # Data Normalization
+        self.df['sanctioned_amount'] = pd.to_numeric(self.df.get('sanctioned_amount', 0), errors='coerce').fillna(0)
+        self.df['sanction_delay_days'] = pd.to_numeric(self.df.get('sanction_delay_days', 0), errors='coerce').fillna(0)
+        self.df['work_category'] = self.df.get('work_category', 'General').fillna('General')
+        self.df['state'] = self.df.get('state', 'Unknown').fillna('Unknown')
+        self.df['agency_name'] = self.df.get('agency_name', 'Unknown Agency').fillna('Unknown Agency')
+        self.df['work_description'] = self.df.get('work_description', '').fillna('')
 
-def perform_ela_tampering_check(image_path, quality=90):
-    """
-    Module 3: Error Level Analysis (ELA) for Detecting Digital Alterations.
-    Resaves image at a specific quality level and checks pixel compression differences.
-    """
-    try:
-        temp_filename = "temp_ela.jpg"
-        original = Image.open(image_path).convert('RGB')
+    def calculate_peer_benchmarks(self):
+        """1. PEER BENCHMARKING ENGINE"""
+        # Group by State & Category to find Median Cost
+        group_cols = ['state', 'work_category']
+        medians = self.df.groupby(group_cols)['sanctioned_amount'].transform('median')
         
-        # Save temporary image with fixed compression rate
-        original.save(temp_filename, 'JPEG', quality=quality)
-        resaved = Image.open(temp_filename)
+        # Calculate Percentage Deviation from Peer Median
+        self.df['peer_median_cost'] = medians
+        self.df['cost_peer_deviation_pct'] = np.where(
+            self.df['peer_median_cost'] > 0,
+            ((self.df['sanctioned_amount'] - self.df['peer_median_cost']) / self.df['peer_median_cost']) * 100,
+            0
+        )
         
-        # Find absolute pixel difference
-        ela_image = ImageChops.difference(original, resaved)
-        extrema = ela_image.getextrema()
-        max_diff = max([ex[1] for ex in extrema])
+        # Peer Risk Signal (High deviation = High Risk)
+        self.df['signal_peer_cost'] = np.where(self.df['cost_peer_deviation_pct'] > 50, 1.0, 0.0)
+
+    def analyze_agency_network(self):
+        """2. AGENCY / WORK NETWORK INTELLIGENCE (Cartelization Detector)"""
+        # Agency Concentration in Constituency
+        agency_counts = self.df.groupby(['constituency', 'agency_name'])['work_id'].transform('count')
+        total_constituency_works = self.df.groupby('constituency')['work_id'].transform('count')
         
-        if max_diff == 0:
-            max_diff = 1
-            
-        scale = 255.0 / max_diff
-        ela_image = ImageEnhance.Brightness(ela_image).enhance(scale)
+        self.df['agency_work_share_pct'] = (agency_counts / total_constituency_works) * 100
         
-        # Clean temporary image
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+        # Text Similarity Detection for Split Micro-Tenders (TF-IDF)
+        tfidf = TfidfVectorizer(stop_words='english')
+        tfidf_matrix = tfidf.fit_transform(self.df['work_description'])
+        similarity_matrix = cosine_similarity(tfidf_matrix)
+        
+        # High similarity flag (> 0.85 similarity with other works)
+        np.fill_diagonal(similarity_matrix, 0)
+        max_sim = similarity_matrix.max(axis=1)
+        self.df['text_similarity_score'] = max_sim
+        
+        # Network Anomaly Signal
+        self.df['signal_network_cartel'] = np.where(
+            (self.df['agency_work_share_pct'] > 40) | (self.df['text_similarity_score'] > 0.85),
+            1.0, 0.0
+        )
 
-        # Convert ELA image to numpy array for variance calculation
-        ela_np = np.array(ela_image)
-        variance = np.var(ela_np)
+    def run_isolation_forest(self):
+        """Unsupervised Anomaly Detection Baseline"""
+        features = self.df[['sanctioned_amount', 'sanction_delay_days']].fillna(0)
+        iso = IsolationForest(contamination=0.1, random_state=42)
+        self.df['iso_anomaly_score'] = iso.fit_predict(features)
+        self.df['signal_iso_forest'] = np.where(self.df['iso_anomaly_score'] == -1, 1.0, 0.0)
 
-        # High variance in error levels indicates potential digital splicing / manipulation
-        is_tampered = variance > 1200.0
-        return is_tampered, round(float(variance), 2)
+    def compute_evidence_fusion_and_priority(self):
+        """3. MULTI-SIGNAL EVIDENCE FUSION & 4. INVESTIGATION PRIORITY QUEUE"""
+        self.calculate_peer_benchmarks()
+        self.analyze_agency_network()
+        self.run_isolation_forest()
 
-    except Exception as e:
-        return False, 0.0
+        # Additional basic signals
+        self.df['signal_delay'] = np.where(self.df['sanction_delay_days'] > 90, 1.0, 0.0)
 
+        # Signal Count
+        signal_cols = ['signal_peer_cost', 'signal_network_cartel', 'signal_iso_forest', 'signal_delay']
+        self.df['active_signals_count'] = self.df[signal_cols].sum(axis=1)
 
-def analyze_document_tampering(image_path):
-    """
-    Dynamic API Handler called by Flask (app.py) during document screening.
-    """
-    reasons = []
-    risk_score = 10  # Baseline
+        # Weighted Evidence Fusion (Normalized 0 - 100)
+        self.df['risk_score'] = (
+            self.df['signal_peer_cost'] * 30 +
+            self.df['signal_network_cartel'] * 35 +
+            self.df['signal_iso_forest'] * 20 +
+            self.df['signal_delay'] * 15
+        ).clip(0, 100)
 
-    # 1. Perform ELA Digital Alteration Check
-    is_tampered, ela_score = perform_ela_tampering_check(image_path)
-    if is_tampered:
-        risk_score += 45
-        reasons.append(f"Digital pixel manipulation detected via Error Level Analysis (ELA Variance: {ela_score}).")
+        # CAG Audit Category Mapping
+        conditions = [
+            (self.df['risk_score'] >= 75),
+            (self.df['risk_score'] >= 45),
+            (self.df['risk_score'] < 45)
+        ]
+        choices = ['HIGH RISK (Verification Urged)', 'MEDIUM RISK (Audit Alert)', 'LOW RISK']
+        self.df['audit_verdict'] = np.select(conditions, choices, default='LOW RISK')
 
-    # 2. Basic Metadata Inspection
-    try:
-        img = Image.open(image_path)
-        info = img._getexif() if hasattr(img, '_getexif') else None
-        if info:
-            metadata_str = str(info).lower()
-            if any(software in metadata_str for software in ['photoshop', 'gimp', 'canva', 'paint']):
-                risk_score += 35
-                reasons.append("Image EXIF metadata indicates editing software trace (Photoshop/GIMP).")
-    except Exception:
-        pass
+        # Investigation Priority Score = Risk Score * Financial Exposure (Amount in Lakhs)
+        self.df['financial_exposure_lakhs'] = self.df['sanctioned_amount'] / 100000
+        self.df['investigation_priority_score'] = self.df['risk_score'] * self.df['financial_exposure_lakhs']
 
-    # Normalize Score (0 to 100)
-    final_risk_score = min(100, risk_score)
-    
-    severity = "LOW"
-    if final_risk_score > 65:
-        severity = "HIGH"
-    elif final_risk_score > 35:
-        severity = "MEDIUM"
+        # Sort by Priority Queue
+        self.df = self.df.sort_values(by='investigation_priority_score', ascending=False)
+        return self.df
 
-    if not reasons:
-        reasons.append("Document visual structure & digital signature appear genuine.")
+    def get_priority_queue_results(self):
+        processed_df = self.compute_evidence_fusion_and_priority()
+        
+        output = []
+        for _, row in processed_df.iterrows():
+            reasons = []
+            if row['signal_peer_cost'] == 1.0:
+                reasons.append(f"Cost (+{row['cost_peer_deviation_pct']:.1f}%) significantly exceeds state peer median (₹{row['peer_median_cost']/100000:.1f}L)")
+            if row['signal_network_cartel'] == 1.0:
+                reasons.append(f"Agency concentration anomaly: {row['agency_name']} holds {row['agency_work_share_pct']:.1f}% of constituency works")
+            if row['signal_delay'] == 1.0:
+                reasons.append(f"Sanction delay anomaly ({int(row['sanction_delay_days'])} days)")
+            if row['text_similarity_score'] > 0.85:
+                reasons.append(f"High description similarity ({row['text_similarity_score']:.2f}) indicates potential split micro-tender")
 
-    return {
-        "risk_score": final_risk_score,
-        "severity": severity,
-        "tampering_detected": is_tampered,
-        "risk_reasons": reasons
-    }
-
-
-def generate_document_reasons(row):
-    """Generates human-readable explainable evidence for border officials."""
-    reasons = []
-    if row.get("is_expired", False):
-        reasons.append("Document has passed its official validity / expiration date.")
-    if row.get("mrz_checksum_valid") == False:
-        reasons.append("Machine Readable Zone (MRZ) checksum validation failed.")
-    if row.get("tampering_flag", False):
-        reasons.append("Visual Tampering Engine flagged photo replacement or text manipulation.")
-    
-    if not reasons:
-        reasons.append("Document parameters match official international standards.")
-
-    return reasons
-
-
-def calculate_risk():
-    """Batch calculation routine for mock dataset processing."""
-    print("[*] Phase 3: Executing Document Tampering & Multi-Signal Risk Engine...")
-
-    if not INPUT_FILE.exists():
-        print(f"[!] Input file missing: {INPUT_FILE}")
-        sys.exit(1)
-
-    df = pd.read_csv(INPUT_FILE)
-
-    # Calculate batch risk score
-    df["risk_score"] = np.where(df["tampering_flag"], 85.0, 15.0)
-    df["severity"] = np.where(df["risk_score"] > 60, "HIGH", "LOW")
-    df["recommended_action"] = np.where(df["severity"] == "HIGH", "Secondary Inspection Required", "Passed Clearance")
-
-    df["risk_reasons"] = df.apply(generate_document_reasons, axis=1)
-
-    df.to_csv(OUTPUT_FILE, index=False)
-    print(f"[✔] Border Risk Engine Completed! Output saved at: {OUTPUT_FILE}")
-
-
-if __name__ == "__main__":
-    calculate_risk()
+            output.append({
+                "work_id": str(row.get('work_id', 'N/A')),
+                "work_description": row['work_description'],
+                "constituency": row['constituency'],
+                "agency_name": row['agency_name'],
+                "sanctioned_amount_inr": float(row['sanctioned_amount']),
+                "risk_score": float(row['risk_score']),
+                "audit_verdict": row['audit_verdict'],
+                "investigation_priority_score": float(row['investigation_priority_score']),
+                "active_signals_count": int(row['active_signals_count']),
+                "explainable_reasons": reasons
+            })
+        return output
