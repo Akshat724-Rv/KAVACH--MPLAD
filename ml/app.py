@@ -4,7 +4,6 @@ from risk_engine import ESATARKRiskEngine
 
 app = Flask(__name__)
 
-# Mock Dataset representing MPLADS e-SAKSHI Data Feed
 MOCK_MPLADS_DATA = [
     {
         "work_id": "MPLADS-2026-101",
@@ -45,7 +44,6 @@ def health():
 @app.route('/api/analyze-priority-queue', methods=['GET', 'POST'])
 def analyze_priority_queue():
     try:
-        # Load incoming data or fallback to MPLADS mock pipeline
         input_data = request.json.get('data') if request.is_json and 'data' in request.json else MOCK_MPLADS_DATA
         df = pd.DataFrame(input_data)
         
