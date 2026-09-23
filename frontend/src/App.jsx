@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import "./index.css";
 
@@ -472,6 +472,16 @@ export default function App() {
   const [copilotMessage, setCopilotMessage] = useState(
     "Hello. I can explain risk signals, identify priority works and suggest verification actions."
   );
+  const [chatInput, setChatInput] = useState("");
+  const [chatTyping, setChatTyping] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    {
+      id: 1,
+      role: "assistant",
+      text: "Hello. I am the KAVACH-MPLAD Monitoring Copilot. Ask me about priority works, risk signals, verification actions or the current monitoring picture."
+    }
+  ]);
+  const chatEndRef = useRef(null);
 
   const [precheckOpen, setPrecheckOpen] = useState(false);
   const [precheckResult, setPrecheckResult] = useState(null);
@@ -785,41 +795,96 @@ export default function App() {
      COPILOT
   ======================================================= */
 
-  const runCopilot = (question) => {
-    let answer = "";
+  const answerCopilot = (question) => {
+    const text = String(question || "").trim().toLowerCase();
 
-    if (question === "high") {
-      answer =
-        `There are ${stats.high} high-risk works and ${stats.medium} medium-risk works currently requiring verification.`;
-    } else if (question === "why") {
-      const risky = [...works]
+    if (text === "high" || text.includes("priority") || text.includes("high risk")) {
+      const top = [...works]
         .filter((work) => Number(work.risk_score || 0) >= 75)
-        .sort(
-          (a, b) =>
-            Number(b.risk_score || 0) -
-            Number(a.risk_score || 0)
-        )[0];
+        .sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0))[0];
 
-      if (risky) {
-        answer =
-          `${risky.work_id} is prioritised because of ${
-            risky.active_signals_count || 0
-          } active risk signals including cost, delay or similarity indicators.`;
-      } else {
-        answer =
-          "No high-risk work is currently present. Medium-risk works remain available for review.";
+      if (top) {
+        return `There are ${stats.high} high-risk works and ${stats.medium} medium-risk works in the current monitoring set. The highest risk record is ${top.work_id} with a score of ${Number(top.risk_score || 0)}/100.`;
       }
-    } else if (question === "action") {
-      answer =
-        "Recommended workflow: verify cost estimate → check implementation delay → compare similar works → validate supporting documents.";
-    } else {
-      answer =
-        "KAVACH-MPLAD analyses cost, delay, similarity and multiple project indicators to prioritise works for human verification.";
+
+      return "There are currently no high-risk works in the monitoring set. Medium-risk works remain available for review.";
     }
 
+    if (text === "why" || text.includes("why") || text.includes("explain risk") || text.includes("reason")) {
+      const risky = [...works]
+        .sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0))[0];
+
+      if (!risky) return "No monitoring records are currently available for explanation.";
+
+      const reasons = Array.isArray(risky.explainable_reasons)
+        ? risky.explainable_reasons.slice(0, 3).join(" ")
+        : "Multiple analytical indicators are active.";
+
+      return `${risky.work_id} currently has a risk score of ${Number(risky.risk_score || 0)}/100. The recorded indicators are: ${reasons}`;
+    }
+
+    if (text === "action" || text.includes("action") || text.includes("verify") || text.includes("next step")) {
+      return "Recommended verification workflow: first check the sanctioned cost against comparable works, then review implementation delay, compare similar work descriptions, and finally validate supporting documents. AI output is a screening aid; human verification remains required.";
+    }
+
+    if (text.includes("map") || text.includes("state")) {
+      const highestState = stateRisk[0];
+      return highestState
+        ? `${highestState.state} currently has the highest average risk score in the displayed state summary at ${highestState.avg}/100, based on ${highestState.total} monitored work(s).`
+        : "State-level risk information is not available yet.";
+    }
+
+    if (text.includes("signal") || text.includes("anomal")) {
+      const strongest = Object.entries(signalCounts).sort((a, b) => b[1] - a[1])[0];
+      return strongest
+        ? `${strongest[0]} is the most frequently represented signal in the current monitoring records (${strongest[1]} work(s)). Signals indicate records for verification, not confirmed fraud.`
+        : "No analytical signals are currently available.";
+    }
+
+    if (text.includes("total") || text.includes("how many") || text.includes("works")) {
+      return `The current monitoring set contains ${stats.total} works: ${stats.high} high risk, ${stats.medium} medium risk and ${stats.low} low risk. Average risk score is ${stats.avg}/100.`;
+    }
+
+    return "I can help with the current monitoring set. Try asking: ‘Which works are high risk?’, ‘Why is this work risky?’, ‘What should I verify?’, ‘Which state has higher risk?’, or ‘What signals are active?’";
+  };
+
+  const sendCopilotMessage = (rawMessage) => {
+    const message = String(rawMessage || "").trim();
+    if (!message || chatTyping) return;
+
+    const answer = answerCopilot(message);
     setCopilotMessage(answer);
     setCopilotOpen(true);
+    setChatInput("");
+    setChatMessages((previous) => [
+      ...previous,
+      { id: Date.now(), role: "user", text: message }
+    ]);
+    setChatTyping(true);
+
+    window.setTimeout(() => {
+      setChatMessages((previous) => [
+        ...previous,
+        { id: Date.now() + 1, role: "assistant", text: answer }
+      ]);
+      setChatTyping(false);
+    }, 420);
   };
+
+  const runCopilot = (question) => {
+    const labels = {
+      high: "Show priority works",
+      why: "Explain the current highest-risk record",
+      action: "What verification actions are recommended?"
+    };
+    sendCopilotMessage(labels[question] || question);
+  };
+
+  useEffect(() => {
+    if (copilotOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [chatMessages, chatTyping, copilotOpen]);
 
   /* =======================================================
      PRECHECK
@@ -1520,118 +1585,81 @@ export default function App() {
           ================================================= */}
 
           <section className="section-space">
-
-            <div className="ai-command-grid">
-
-              <div className="ai-copilot-card">
-
-                <div className="ai-card-header">
-
-                  <div>
-                    <span className="section-label">
-                      SENTINEL AI
-                    </span>
-
-                    <h2>
-                      Monitoring Copilot
-                    </h2>
-                  </div>
-
-                  <span className="ai-status">
-                    ● AI READY
-                  </span>
-
-                </div>
-
-
-                <div className="copilot-message">
-
-                  <div className="copilot-avatar">
-                    S
-                  </div>
-
-                  <p>
-                    {copilotMessage}
-                  </p>
-
-                </div>
-
-
-                <div className="copilot-actions">
-
-                  <button
-                    onClick={() =>
-                      runCopilot("high")
-                    }
-                  >
-                    Show priority works
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      runCopilot("why")
-                    }
-                  >
-                    Explain risk
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      runCopilot("action")
-                    }
-                  >
-                    Recommended actions
-                  </button>
-
-                </div>
-
-              </div>
-
-
-              <div className="precheck-card">
-
-                <div className="ai-card-header">
-
-                  <div>
-                    <span className="section-label">
-                      AI PRE-CHECK
-                    </span>
-
-                    <h2>
-                      Screen a New Work
-                    </h2>
-                  </div>
-
-                  <span className="precheck-badge">
-                    EARLY SCREENING
-                  </span>
-
-                </div>
-
-
-                <p>
-                  Run a preliminary AI risk screening
-                  before a new work enters the monitoring
-                  queue.
+            <div className="section-heading-row">
+              <div>
+                <span className="section-label">AI ASSISTANCE</span>
+                <h2>Monitoring Copilot</h2>
+                <p className="section-description">
+                  Ask questions about the current MPLADS monitoring data and get explainable screening guidance.
                 </p>
-
-
-                <button
-                  className="btn primary"
-                  onClick={() => {
-                    setPrecheckOpen(true);
-                    setPrecheckResult(null);
-                  }}
-                >
-                  + New Work AI Pre-Check
-                </button>
-
               </div>
-
+              <button className="btn primary copilot-open-button" onClick={() => setCopilotOpen(true)}>
+                <span className="copilot-open-icon">✦</span>
+                Open Copilot
+              </button>
             </div>
 
-          </section>
+            <div className="ai-chat-preview">
+              <div className="ai-chat-preview-head">
+                <div className="ai-chat-identity">
+                  <div className="ai-chat-avatar">S</div>
+                  <div>
+                    <strong>Sentinel AI</strong>
+                    <span>Monitoring Copilot · Online</span>
+                  </div>
+                </div>
+                <span className="ai-live-pill"><i></i> READY</span>
+              </div>
 
+              <div className="ai-chat-preview-body">
+                <div className="preview-message assistant">
+                  <div className="preview-avatar">S</div>
+                  <div className="preview-bubble">
+                    <span className="preview-name">Sentinel AI</span>
+                    <p>
+                      Hello. I can help you understand priority works, risk signals and recommended verification actions from the current monitoring set.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="preview-message user">
+                  <div className="preview-bubble">
+                    <p>Which works should I verify first?</p>
+                  </div>
+                </div>
+
+                <div className="preview-message assistant">
+                  <div className="preview-avatar">S</div>
+                  <div className="preview-bubble">
+                    <span className="preview-name">Sentinel AI</span>
+                    <p>
+                      There are <b>{stats.high}</b> high-risk works in the current set. Open the copilot for the detailed priority list and explainable reasons.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="ai-chat-preview-composer" onClick={() => setCopilotOpen(true)}>
+                <span>Message Sentinel AI…</span>
+                <button type="button" aria-label="Open chat"><Icon type="arrow" size={16} /></button>
+              </div>
+            </div>
+
+            <div className="ai-command-shortcuts">
+              <button onClick={() => runCopilot("high")}>
+                <span>01</span> Show priority works
+              </button>
+              <button onClick={() => runCopilot("why")}>
+                <span>02</span> Explain current risk
+              </button>
+              <button onClick={() => runCopilot("action")}>
+                <span>03</span> Verification actions
+              </button>
+              <button onClick={() => setPrecheckOpen(true)}>
+                <span>04</span> New work pre-check
+              </button>
+            </div>
+          </section>
 
           {/* =================================================
               GEO MAP
@@ -1737,7 +1765,7 @@ export default function App() {
               <iframe
                 title="India National Risk Map"
                 className="national-map"
-                src="https://www.openstreetmap.org/export/embed.html?bbox=68%2C6%2C98%2C37&layer=mapnik"
+                src="https://www.openstreetmap.org/export/embed.html?bbox=68.0%2C6.0%2C98.0%2C37.0&layer=mapnik&marker=20.5937%2C78.9629"
                 loading="lazy"
               />
 
@@ -2727,87 +2755,88 @@ export default function App() {
 
 
       {/* =====================================================
-          COPILOT MODAL
+          COPILOT CHAT
       ===================================================== */}
 
       {copilotOpen && (
-
         <div
           className="modal-backdrop"
-          onClick={() =>
-            setCopilotOpen(false)
-          }
+          onClick={() => setCopilotOpen(false)}
         >
-
           <div
-            className="copilot-modal"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
+            className="copilot-modal copilot-chat-modal"
+            onClick={(event) => event.stopPropagation()}
           >
-
-            <button
-              className="close"
-              onClick={() =>
-                setCopilotOpen(false)
-              }
-            >
-              ×
-            </button>
-
-            <span className="section-label">
-              SENTINEL AI
-            </span>
-
-            <h2>
-              Monitoring Copilot
-            </h2>
-
-            <div className="copilot-large-message">
-
-              <div className="copilot-avatar">
-                S
+            <div className="chat-header">
+              <div className="chat-title-wrap">
+                <div className="copilot-avatar">S</div>
+                <div>
+                  <span className="section-label">AI MONITORING ASSISTANT</span>
+                  <h2>Sentinel AI</h2>
+                  <span className="chat-subtitle">KAVACH-MPLAD · MPLADS risk intelligence</span>
+                </div>
               </div>
-
-              <p>
-                {copilotMessage}
-              </p>
-
+              <button className="close" onClick={() => setCopilotOpen(false)} aria-label="Close copilot">×</button>
             </div>
 
-
-            <div className="copilot-modal-actions">
-
-              <button
-                onClick={() =>
-                  runCopilot("high")
-                }
-              >
-                Priority Works
-              </button>
-
-              <button
-                onClick={() =>
-                  runCopilot("why")
-                }
-              >
-                Explain Risk
-              </button>
-
-              <button
-                onClick={() =>
-                  runCopilot("action")
-                }
-              >
-                Recommended Actions
-              </button>
-
+            <div className="chat-notice">
+              AI-generated screening support. Risk signals require human verification.
             </div>
 
+            <div className="chat-window" aria-live="polite">
+              {chatMessages.map((message) => (
+                <div key={message.id} className={`chat-row ${message.role}`}>
+                  {message.role === "assistant" && <div className="chat-mini-avatar">S</div>}
+                  <div className={`chat-bubble ${message.role}`}>
+                    {message.text}
+                  </div>
+                </div>
+              ))}
+
+              {chatTyping && (
+                <div className="chat-row assistant">
+                  <div className="chat-mini-avatar">S</div>
+                  <div className="chat-bubble assistant typing-bubble">
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="chat-quick-actions">
+              <button onClick={() => runCopilot("high")} disabled={chatTyping}>Priority works</button>
+              <button onClick={() => runCopilot("why")} disabled={chatTyping}>Explain risk</button>
+              <button onClick={() => runCopilot("action")} disabled={chatTyping}>Verification actions</button>
+            </div>
+
+            <form
+              className="chat-composer"
+              onSubmit={(event) => {
+                event.preventDefault();
+                sendCopilotMessage(chatInput);
+              }}
+            >
+              <textarea
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    sendCopilotMessage(chatInput);
+                  }
+                }}
+                placeholder="Ask about risk, priority works, signals or verification…"
+                rows={2}
+                disabled={chatTyping}
+              />
+              <button type="submit" className="chat-send" disabled={!chatInput.trim() || chatTyping}>
+                <Icon type="arrow" size={17} />
+              </button>
+            </form>
+            <div className="chat-footer-hint">Enter to send • Shift + Enter for a new line</div>
           </div>
-
         </div>
-
       )}
 
 
